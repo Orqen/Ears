@@ -1,0 +1,9 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+boto3==1.36.4
+google-cloud-firestore==2.19.0
+grpcio==1.69.0
+grpcio-tools==1.69.0
+protobuf==5.29.3
+pydantic-settings==2.7.1
