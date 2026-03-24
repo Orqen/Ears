@@ -15,7 +15,7 @@ OPERATION_URL = "https://operation.api.cloud.yandex.net/operations"
 def _auth_header() -> dict[str, str]:
     if settings.yc_iam_token:
         return {"Authorization": f"Bearer {settings.yc_iam_token}"}
-    return {"Authorization": f"Api-Key {settings.yc_api_key}"}
+    return {"Authorization": f"Api-Key {settings.yandex_api_key}"}
 
 
 def _detect_audio_encoding(filename: str) -> str:
@@ -25,8 +25,10 @@ def _detect_audio_encoding(filename: str) -> str:
         "opus": "OGG_OPUS",
         "mp3": "MP3",
         "wav": "LINEAR16_PCM",
+        "m4a": "LINEAR16_PCM",
+        "aac": "LINEAR16_PCM",
     }
-    return mapping.get(ext, "MP3")
+    return mapping.get(ext, "OGG_OPUS")
 
 
 def start_recognition(s3_uri: str, filename: str) -> str:
@@ -45,10 +47,13 @@ def start_recognition(s3_uri: str, filename: str) -> str:
         "audio": {
             "uri": s3_uri,
         },
+        "folderId": settings.yandex_folder_id,
     }
 
     resp = requests.post(TRANSCRIBE_URL, json=body, headers=_auth_header(), timeout=30)
-    resp.raise_for_status()
+    if not resp.ok:
+        logger.error("STT request failed %s: %s", resp.status_code, resp.text)
+        raise RuntimeError(f"STT error {resp.status_code}: {resp.text}")
     data = resp.json()
 
     operation_id = data["id"]

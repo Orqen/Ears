@@ -1,4 +1,7 @@
 import logging
+import os
+import subprocess
+import tempfile
 import uuid
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, UploadFile
@@ -13,12 +16,41 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Ears", description="Audio transcription service")
 
-MAX_FILE_SIZE = 150 * 1024 * 1024  # 150 MB
+MAX_FILE_SIZE = settings.max_audio_size_mb * 1024 * 1024
+
+NEEDS_CONVERT = {".m4a", ".aac", ".wma", ".flac", ".webm"}
+
+
+def _convert_to_mp3(file_data: bytes, original_ext: str) -> tuple[bytes, str]:
+    """Convert unsupported audio formats to MP3 via ffmpeg."""
+    with tempfile.NamedTemporaryFile(suffix=original_ext, delete=False) as src:
+        src.write(file_data)
+        src_path = src.name
+    dst_path = src_path.rsplit(".", 1)[0] + ".mp3"
+    try:
+        subprocess.run(
+            ["ffmpeg", "-i", src_path, "-vn", "-acodec", "libmp3lame", "-q:a", "4", dst_path, "-y"],
+            check=True,
+            capture_output=True,
+        )
+        with open(dst_path, "rb") as f:
+            return f.read(), "converted.mp3"
+    finally:
+        for p in (src_path, dst_path):
+            if os.path.exists(p):
+                os.unlink(p)
 
 
 def _process_audio(task_id: str, filename: str, file_data: bytes) -> None:
     """Background task: upload to S3, start STT, poll for result."""
     try:
+        # 0. Convert unsupported formats to MP3
+        ext = os.path.splitext(filename)[1].lower()
+        if ext in NEEDS_CONVERT:
+            logger.info("Converting %s to MP3...", ext)
+            taskstore.update_task(task_id, status="converting")
+            file_data, filename = _convert_to_mp3(file_data, ext)
+
         # 1. Upload to Yandex Object Storage
         taskstore.update_task(task_id, status="uploading")
         s3_uri = storage.upload_file(task_id, filename, file_data)
@@ -55,7 +87,10 @@ async def transcribe(
 
     file_data = await file.read()
     if len(file_data) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail="File too large (max 150MB)")
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large (max {settings.max_audio_size_mb}MB)",
+        )
 
     task_id = str(uuid.uuid4())
     taskstore.create_task(task_id, file.filename)
