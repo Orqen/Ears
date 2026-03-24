@@ -41,13 +41,13 @@ def start_recognition(s3_uri: str, filename: str) -> str:
                 "languageCode": settings.stt_language,
                 "model": "general",
                 "audioEncoding": encoding,
-                "literature_text": True,
+                "literatureText": True,
             },
+            "folderId": settings.yandex_folder_id,
         },
         "audio": {
             "uri": s3_uri,
         },
-        "folderId": settings.yandex_folder_id,
     }
 
     resp = requests.post(TRANSCRIBE_URL, json=body, headers=_auth_header(), timeout=30)
@@ -99,7 +99,7 @@ def check_operation(operation_id: str) -> OperationResult:
     return OperationResult(done=True, text=full_text)
 
 
-def wait_for_result(operation_id: str, max_wait: int = 600, poll_interval: int = 5) -> OperationResult:
+def wait_for_result(operation_id: str, max_wait: int = 3600, poll_interval: int = 10) -> OperationResult:
     """Poll until operation completes. Used in background tasks."""
     elapsed = 0
     while elapsed < max_wait:

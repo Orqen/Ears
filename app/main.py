@@ -56,20 +56,11 @@ def _process_audio(task_id: str, filename: str, file_data: bytes) -> None:
         s3_uri = storage.upload_file(task_id, filename, file_data)
         logger.info("Uploaded %s -> %s", filename, s3_uri)
 
-        # 2. Start async recognition
+        # 2. Start async recognition (no waiting — status checked via GET /tasks)
         taskstore.update_task(task_id, status="recognizing")
         operation_id = stt.start_recognition(s3_uri, filename)
         taskstore.update_task(task_id, operation_id=operation_id)
-
-        # 3. Poll for result
-        result = stt.wait_for_result(operation_id)
-
-        if result.error:
-            taskstore.update_task(task_id, status="error", error=result.error)
-            logger.error("STT failed for %s: %s", task_id, result.error)
-        else:
-            taskstore.update_task(task_id, status="done", text=result.text)
-            logger.info("Transcription done for %s", task_id)
+        logger.info("STT started for %s, operation_id=%s", task_id, operation_id)
 
     except Exception as e:
         logger.exception("Processing failed for %s", task_id)

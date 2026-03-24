@@ -27,4 +27,4 @@ def upload_file(task_id: str, filename: str, file_data: bytes) -> str:
         Key=key,
         Body=file_data,
     )
-    return f"s3://{settings.yc_s3_bucket}/{key}"
+    return f"https://storage.yandexcloud.net/{settings.yc_s3_bucket}/{key}"
