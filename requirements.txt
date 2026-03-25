@@ -3,6 +3,7 @@ hypercorn==0.17.3
 python-multipart==0.0.20
 boto3==1.36.4
 google-cloud-firestore==2.19.0
+google-cloud-storage>=2.0.0
 grpcio==1.69.0
 grpcio-tools==1.69.0
 protobuf==5.29.3

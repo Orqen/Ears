@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     # Google Cloud
     google_cloud_project: str = ""
 
+    # GCS (for async uploads)
+    gcs_upload_bucket: str = "ears-uploads"
+    gcs_signed_url_ttl_minutes: int = 30
+
     # Limits
     max_audio_size_mb: int = 500
 

@@ -31,14 +31,15 @@ def _detect_audio_encoding(filename: str) -> str:
     return mapping.get(ext, "OGG_OPUS")
 
 
-def start_recognition(s3_uri: str, filename: str) -> str:
+def start_recognition(s3_uri: str, filename: str, language_code: str | None = None) -> str:
     """Submit audio for async recognition. Returns operation_id."""
     encoding = _detect_audio_encoding(filename)
+    language = language_code or settings.stt_language
 
     body = {
         "config": {
             "specification": {
-                "languageCode": settings.stt_language,
+                "languageCode": language,
                 "model": "general",
                 "audioEncoding": encoding,
                 "literatureText": True,

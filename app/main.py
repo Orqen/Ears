@@ -3,10 +3,14 @@ import math
 import os
 import subprocess
 import tempfile
+from datetime import timedelta
 import uuid
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, UploadFile
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
+
+from google.cloud import storage as gcs_storage
 
 from app.auth import verify_api_key
 from app.config import settings
@@ -82,6 +86,67 @@ def _estimate_cost_from_duration(duration_seconds: float) -> float:
     return 0.0
 
 
+_gcs_client: gcs_storage.Client | None = None
+
+
+def _get_gcs_client() -> gcs_storage.Client:
+    global _gcs_client
+    if _gcs_client is None:
+        _gcs_client = gcs_storage.Client()
+    return _gcs_client
+
+
+def _parse_gcs_uri(gcs_uri: str) -> tuple[str, str]:
+    if not gcs_uri.startswith("gs://"):
+        raise ValueError("gcs_uri must start with gs://")
+    _, rest = gcs_uri.split("gs://", 1)
+    parts = rest.split("/", 1)
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        raise ValueError("gcs_uri must be in form gs://bucket/object")
+    return parts[0], parts[1]
+
+
+class TranscribeGcsRequest(BaseModel):
+    gcs_uri: str
+    lang: str | None = None
+
+
+def _process_audio_from_gcs(task_id: str, gcs_uri: str, language_code: str | None = None) -> None:
+    """Download audio from GCS, cleanup, then reuse the existing pipeline."""
+    try:
+        bucket_name, object_name = _parse_gcs_uri(gcs_uri)
+        if bucket_name != settings.gcs_upload_bucket:
+            raise ValueError(f"gcs_uri bucket must be '{settings.gcs_upload_bucket}'")
+
+        client = _get_gcs_client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(object_name)
+
+        if not blob.exists():
+            raise FileNotFoundError("GCS object not found")
+
+        # Best-effort size check (can be None for some backends).
+        if blob.size is not None and blob.size > MAX_FILE_SIZE:
+            raise ValueError(f"File too large (max {settings.max_audio_size_mb}MB)")
+
+        filename = os.path.basename(object_name) or "audio"
+        file_data = blob.download_as_bytes()
+        if len(file_data) > MAX_FILE_SIZE:
+            raise ValueError(f"File too large (max {settings.max_audio_size_mb}MB)")
+
+        # Cleanup: delete the source file after we have a local copy.
+        try:
+            blob.delete()
+        except Exception:
+            logger.warning("Failed to delete GCS object %s (continuing)", gcs_uri, exc_info=True)
+
+        _process_audio(task_id, filename, file_data, language_code=language_code)
+
+    except Exception as e:
+        logger.exception("Processing from GCS failed for %s", task_id)
+        taskstore.update_task(task_id, status="error", error=str(e))
+
+
 def _convert_to_mp3(file_data: bytes, original_ext: str) -> tuple[bytes, str, float]:
     """Convert unsupported audio formats to MP3 via ffmpeg."""
     with tempfile.NamedTemporaryFile(suffix=original_ext, delete=False) as src:
@@ -104,7 +169,7 @@ def _convert_to_mp3(file_data: bytes, original_ext: str) -> tuple[bytes, str, fl
                 os.unlink(p)
 
 
-def _process_audio(task_id: str, filename: str, file_data: bytes) -> None:
+def _process_audio(task_id: str, filename: str, file_data: bytes, language_code: str | None = None) -> None:
     """Background task: upload to S3, start STT, poll for result."""
     try:
         # 0. Convert unsupported formats to MP3
@@ -139,7 +204,7 @@ def _process_audio(task_id: str, filename: str, file_data: bytes) -> None:
 
         # 2. Start async recognition (no waiting — status checked via GET /tasks)
         taskstore.update_task(task_id, status="recognizing")
-        operation_id = stt.start_recognition(s3_uri, filename)
+        operation_id = stt.start_recognition(s3_uri, filename, language_code=language_code)
         taskstore.update_task(task_id, operation_id=operation_id)
         logger.info("STT started for %s, operation_id=%s", task_id, operation_id)
 
@@ -167,9 +232,71 @@ async def transcribe(
     task_id = str(uuid.uuid4())
     taskstore.create_task(task_id, file.filename)
 
-    background_tasks.add_task(_process_audio, task_id, file.filename, file_data)
+    background_tasks.add_task(_process_audio, task_id, file.filename, file_data, None)
 
     return {"task_id": task_id, "status": "processing"}
+
+
+@app.post("/transcribe-gcs", status_code=202)
+async def transcribe_gcs(
+    req: TranscribeGcsRequest,
+    background_tasks: BackgroundTasks,
+    _: str = Depends(verify_api_key),
+):
+    try:
+        bucket_name, object_name = _parse_gcs_uri(req.gcs_uri)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if bucket_name != settings.gcs_upload_bucket:
+        raise HTTPException(
+            status_code=400,
+            detail=f"gcs_uri bucket must be '{settings.gcs_upload_bucket}'",
+        )
+
+    client = _get_gcs_client()
+    blob = client.bucket(bucket_name).blob(object_name)
+    if not blob.exists():
+        raise HTTPException(status_code=404, detail="GCS object not found")
+    if blob.size is not None and blob.size > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large (max {settings.max_audio_size_mb}MB)",
+        )
+
+    filename = os.path.basename(object_name) or "audio"
+    task_id = str(uuid.uuid4())
+    taskstore.create_task(task_id, filename)
+    background_tasks.add_task(_process_audio_from_gcs, task_id, req.gcs_uri, req.lang)
+
+    return {"task_id": task_id, "status": "processing"}
+
+
+@app.get("/upload-url")
+async def get_upload_url(
+    filename: str,
+    content_type: str,
+    _: str = Depends(verify_api_key),
+):
+    safe_filename = os.path.basename(filename or "")
+    if not safe_filename or safe_filename in {".", ".."}:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    object_name = f"{uuid.uuid4()}/{safe_filename}"
+    bucket_name = settings.gcs_upload_bucket
+
+    blob = _get_gcs_client().bucket(bucket_name).blob(object_name)
+    upload_url = blob.generate_signed_url(
+        expiration=timedelta(minutes=settings.gcs_signed_url_ttl_minutes),
+        method="PUT",
+        content_type=content_type,
+        version="v4",
+    )
+
+    return {
+        "upload_url": upload_url,
+        "gcs_uri": f"gs://{bucket_name}/{object_name}",
+    }
 
 
 @app.get("/tasks/{task_id}")

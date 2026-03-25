@@ -123,6 +123,8 @@ curl https://YOUR-URL/tasks/TASK_ID/download \
 | `GOOGLE_CLOUD_PROJECT` | Yes | GCP project ID (for Firestore) |
 | `MAX_AUDIO_SIZE_MB` | No | Max upload size in MB (default: 500) |
 | `STT_LANGUAGE` | No | Recognition language (default: `ru-RU`) |
+| `GCS_UPLOAD_BUCKET` | No | GCS bucket for uploads (default: `ears-uploads`) |
+| `GCS_SIGNED_URL_TTL_MINUTES` | No | TTL for signed upload URLs (default: `30`) |
 | `STT_PRICE_PER_SECOND` | No | STT price per second (used for `cost_estimate` only) |
 | `STT_PRICE_PER_MINUTE` | No | STT price per minute (used for `cost_estimate` only) |
 | `STT_BILLING_ROUNDING` | No | Billing rounding mode: `none`, `ceil_second`, `round`, `ceil_minute` (default: `ceil_minute`) |
@@ -165,6 +167,58 @@ file: <audio file>
 | 400  | No file provided |
 | 403  | Invalid API key |
 | 413  | File exceeds size limit |
+
+---
+
+### `POST /transcribe-gcs`
+
+Upload an audio file from Google Cloud Storage (`GCS`). The request accepts a `gs://...` URI and starts transcription asynchronously.
+
+**Request:**
+
+```
+POST /transcribe-gcs
+Content-Type: application/json
+X-API-Key: <your-api-key>
+
+{
+  "gcs_uri": "gs://ears-uploads/abc123/recording.m4a",
+  "lang": "ru"  // optional
+}
+```
+
+`lang` overrides the `STT_LANGUAGE` for this task (use a Yandex STT-compatible language code, e.g. `ru-RU`).
+
+**Response `202 Accepted`:**
+
+```json
+{
+  "task_id": "8ae26a94-49f8-4039-9c08-c2b0e3ddfbb6",
+  "status": "processing"
+}
+```
+
+---
+
+### `GET /upload-url`
+
+Get a signed URL for uploading a file to `GCS` (`PUT`). The server returns both the signed `upload_url` and the resulting `gcs_uri`.
+
+**Request:**
+
+```
+GET /upload-url?filename=recording.m4a&content_type=audio/mp4
+X-API-Key: <your-api-key>
+```
+
+**Response `200 OK`:**
+
+```json
+{
+  "upload_url": "https://storage.googleapis.com/ears-uploads/...",
+  "gcs_uri": "gs://ears-uploads/abc123/recording.m4a"
+}
+```
 
 ---
 
