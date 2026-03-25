@@ -123,6 +123,9 @@ curl https://YOUR-URL/tasks/TASK_ID/download \
 | `GOOGLE_CLOUD_PROJECT` | Yes | GCP project ID (for Firestore) |
 | `MAX_AUDIO_SIZE_MB` | No | Max upload size in MB (default: 500) |
 | `STT_LANGUAGE` | No | Recognition language (default: `ru-RU`) |
+| `STT_PRICE_PER_SECOND` | No | STT price per second (used for `cost_estimate` only) |
+| `STT_PRICE_PER_MINUTE` | No | STT price per minute (used for `cost_estimate` only) |
+| `STT_BILLING_ROUNDING` | No | Billing rounding mode: `none`, `ceil_second`, `round`, `ceil_minute` (default: `ceil_minute`) |
 
 \* Provide either `YANDEX_API_KEY` or `YC_IAM_TOKEN`.
 
@@ -205,6 +208,36 @@ X-API-Key: <your-api-key>
 |------|-------------|
 | 403  | Invalid API key |
 | 404  | Task not found |
+
+---
+
+### `GET /tasks/{task_id}/cost`
+
+Get a deterministic **estimated** STT cost for the task. The estimate is available only when the task status is `done`.
+
+**Request:**
+
+```
+GET /tasks/{task_id}/cost
+X-API-Key: <your-api-key>
+```
+
+**Response `200 OK`:**
+
+```json
+{
+  "task_id": "8ae26a94-49f8-4039-9c08-c2b0e3ddfbb6",
+  "cost_estimate": 0.123
+}
+```
+
+**Errors:**
+
+| Code | Description |
+|------|-------------|
+| 400  | Task not ready (not in `done` status) |
+| 403  | Invalid API key |
+| 404  | Task not found / cost estimate not available |
 
 ---
 

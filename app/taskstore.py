@@ -22,6 +22,8 @@ def create_task(task_id: str, filename: str) -> dict[str, Any]:
         "status": "uploading",
         "operation_id": None,
         "text": None,
+        "audio_duration_seconds": None,
+        "cost_estimate": None,
         "error": None,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),

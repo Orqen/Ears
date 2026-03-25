@@ -25,6 +25,14 @@ class Settings(BaseSettings):
     # STT settings
     stt_language: str = "ru-RU"
 
+    # STT pricing (cost estimation only)
+    # Real billing can differ due to Yandex pricing rules and minimum billable duration.
+    stt_price_per_second: float = 0.0
+    stt_price_per_minute: float = 0.0
+    # Deterministic rounding to mimic billing behavior.
+    # Supported: "none", "ceil_second", "round", "ceil_minute"
+    stt_billing_rounding: str = "ceil_minute"
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
